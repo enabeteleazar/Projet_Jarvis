@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# v2.0.0
 
 # --- Nettoyage écran (clear)
 clear
@@ -36,6 +36,7 @@ spinner() {
 
 set -e
 
+
 ## ---  VERIFICATION DPKG
     echo -e "${BLUE}🔧 Vérification de l’état du gestionnaire de paquets...${NC}"
     if sudo dpkg --configure -a > /dev/null 2>&1; then
@@ -47,237 +48,189 @@ set -e
         echo -e "${GREEN}✅ Correction effectuée.${NC}"
     fi
 
-
 install_jarvis() {
 
-## ---  FULL UPDATE
-    echo -e "${BLUE}🔄 Mise à jour du système...${NC}"
-    sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}✅ apt-get update terminé.${NC}"
+# --- Nettoyage écran (clear)
+clear
 
-    sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}✅ apt-get upgrade terminé.${NC}"
-    echo -e "\n${BLUE}lation / mise à jour de JARVIS...${NC}"
+echo -e "${BLUE}📦 Installation de JARVIS version Dockerisée (Web + vocal)${NC}"
 
-## ---  INSTALL PYTHON & PIP / DOCKER
-    sudo apt-get install -y -qq python3 python3-pip python3-venv curl docker.io docker-compose > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}✅ Dépendances installés.${NC}"
+# Étape 1 : Mise à jour du système
+echo -e "${BLUE}\n🔄 Mise à jour du système...${NC}"
+sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq > /dev/null 2>&1 & spinner $!
+echo -e "${GREEN}✅ apt-get update terminé.${NC}"
+sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq > /dev/null 2>&1 & spinner $!
+echo -e "${GREEN}✅ apt-get upgrade terminé.${NC}"
 
-## ---  INSTALL CURL
-    echo -e "\n${YELLOW}📦 Vérification de curl...${NC}"
-    if ! command -v curl >/dev/null 2>&1; then
-        sudo apt-get install -y -qq curl > /dev/null 2>&1 &
-        spinner $!
-        echo -e "${GREEN}✅ curl installé.${NC}"
+# Étape 2 : Vérification des dépendances
+echo -e "${BLUE}\n🔍 Vérification des paquets nécessaires...${NC}"
+REQUIRED_CMDS=(python3 python3-pip docker ffmpeg curl git)
+for cmd in "${REQUIRED_CMDS[@]}"; do
+    if ! command -v $cmd &> /dev/null; then
+        echo -e "${YELLOW}❌ $cmd est manquant. Installation...${NC}"
+        sudo apt install -y $cmd -qq > /dev/null 2>&1 & spinner $!
+        echo -e "${GREEN}✅ $cmd est installé${NC}"
     else
-        echo -e "${GREEN}✅ curl déjà présent.${NC}"
+        echo -e "${GREEN}✅ $cmd est installé${NC}"
     fi
+done
 
-## ---  VERIFICATION FULL-INSTALL
-    echo -e "\n${BLUE}🔎 Vérification finale de l'installation...${NC}\n"
+# Étape 3 : Création de la structure du projet
+echo -e "${BLUE}\n📁 Création de la structure du projet...${NC}"
+mkdir -p jarvis/{app,webapp}
 
-## ---  INSTALL DOCKER.IO && DOCKER-COMPOSE
-    # Vérification de Docker
-    if command -v docker >/dev/null 2>&1; then
-        echo -e "\n${GREEN}✅ Docker est installé.${NC}"
-    else
-        echo -e "\n${RED}❌ Docker n'est PAS installé correctement.${NC}"
-    fi
+# server.py
+echo -e "${YELLOW}\n📄 Création de server.py...${NC}"
+cat > jarvis/app/server.py << 'EOF'
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+import whisper, subprocess, uuid, os
+from transformers import pipeline
 
-    # Vérification de Docker Compose
-    if command -v docker-compose >/dev/null 2>&1; then
-        echo -e "${GREEN}✅ Docker Compose est installé.${NC}"
-    else
-        echo -e "${RED}❌ Docker Compose n'est PAS installé correctement.${NC}"
-    fi
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+)
 
-    # Création et activation du venv
-    echo -e "\n${GREEN}📦 Création de l’environnement virtuel Python...${NC}"
-    python3 -m venv jarvis-env
-    source jarvis-env/bin/activate
-    echo -e "${GREEN}✅ Environnement virtuel activé.${NC}"
+@app.get("/")
+async def root():
+    return {"message": "Jarvis est en ligne"}
 
-    # Installation des paquets Python
-    echo -e "\n${YELLOW}📦 Installation des bibliothèques Python...${NC}"
-    pip install --upgrade pip > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}✅ pip mis à jour.${NC}"
+whisper_model = whisper.load_model("base")
+llm = pipeline("text-generation", model="distilgpt2")
 
-    pip install --default-timeout=100 --timeout=100 --retries=10 torch transformers openai-whisper fastapi uvicorn ffmpeg > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}✅ Bibliothèques Python installées.${NC}"
+@app.post("/speech")
+async def transcribe(file: UploadFile = File(...)):
+    raw = f"/tmp/{uuid.uuid4()}.webm"
+    wav = raw.replace(".webm", ".wav")
+    with open(raw, "wb") as f: f.write(await file.read())
 
-    # Configuration SSH
-    echo -e "\n${RED}🔐 Installation et configuration de SSH...${NC}"
-    sudo apt-get install -y -qq openssh-server > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}✅ SSH installé.${NC}"
+    subprocess.run(["ffmpeg", "-y", "-i", raw, wav],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    text = whisper_model.transcribe(wav)["text"]
+    os.remove(raw); os.remove(wav)
 
-    sudo systemctl enable --now ssh > /dev/null 2>&1
-    echo -e "${GREEN}✅ SSH activé.${NC}"
+    response = llm(text, max_new_tokens=100)[0]["generated_text"]
+    return {"text": response}
+EOF
+echo -e "${GREEN}✅ server.py créé.${NC}"
 
-    echo -e "${GREEN}🔧 Configuration avancée de SSH...${NC}"
-    {
-        echo "Port 2222"
-        echo "PermitRootLogin no"
-        echo "PasswordAuthentication no"
-    } | sudo tee -a /etc/ssh/sshd_config > /dev/null
-    sudo systemctl restart ssh > /dev/null 2>&1
-    echo -e "${GREEN}✅ Configuration SSH appliquée.${NC}"
+# requirements.txt
+echo -e "${YELLOW}\n📄 Création de requirements.txt...${NC}"
+cat > jarvis/app/requirements.txt << EOF
+fastapi
+uvicorn[standard]
+whisper
+ffmpeg-python
+python-multipart
+transformers
+torch
+EOF
+echo -e "${GREEN}✅ requirements.txt créé.${NC}"
 
-    # Création Dockerfile
-    echo -e "\n${BLUE}📂 Création du Dockerfile...${NC}"
-    cat <<EOF > Dockerfile
-RUN pip install --no-cache-dir \
-    torch \
-    transformers \
-    openai-whisper \
-    fastapi \
-    uvicorn \
-    python-multipart \
-    pydantic
+# index.html
+echo -e "${YELLOW}\n📄 Création de index.html...${NC}"
+cat > jarvis/webapp/index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>JARVIS</title></head>
+<body>
+  <h1>🎤 Parlez à JARVIS</h1>
+  <button id="record">Parler</button>
+  <p id="result"></p>
+<script>
+const btn = document.getElementById('record');
+btn.onclick = async () => {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const mediaRecorder = new MediaRecorder(stream);
+  const audioChunks = [];
+  mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+  mediaRecorder.onstop = async () => {
+    const blob = new Blob(audioChunks, { type: 'audio/webm' });
+    const fd = new FormData(); fd.append("file", blob, "audio.webm");
+    const res = await fetch("http://" + location.hostname + ":8000/speech", { method: "POST", body: fd });
+    const data = await res.json();
+    document.getElementById("result").textContent = "JARVIS: " + data.text;
+    speechSynthesis.speak(new SpeechSynthesisUtterance(data.text));
+  };
+  mediaRecorder.start(); setTimeout(() => mediaRecorder.stop(), 5000);
+};
+</script>
+</body>
+</html>
+EOF
+echo -e "${GREEN}✅ index.html créé.${NC}"
 
-COPY . /app
+# Dockerfile
+echo -e "${YELLOW}\n📄 Création de Dockerfile...${NC}"
+cat > jarvis/Dockerfile << 'EOF'
+FROM python:3.10-slim
+
+RUN apt update && apt install -y ffmpeg git curl && apt clean
+
 WORKDIR /app
+COPY app /app
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+EXPOSE 8000
+
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
 EOF
 echo -e "${GREEN}✅ Dockerfile créé.${NC}"
 
-    # Création docker-compose.yml
-    echo -e "${YELLOW}📂 Création de docker-compose.yml...${NC}"
-    cat <<EOF > docker-compose.yml
-version: '3.8'
-services:
-  assistant:
-    build: .
-    container_name: jarvis
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/app/data
-    restart: always
+# Makefile
+echo -e "${YELLOW}\n📄 Création de Makefile...${NC}"
+cat > jarvis/Makefile << 'EOF'
+run:
+	docker build -t jarvis .
+	docker run -it --rm -p 8000:8000 --name jarvis jarvis
+
+build:
+	docker build -t jarvis .
+
+stop:
+	docker stop jarvis || true
+	docker rm jarvis || true
 EOF
-echo -e "${GREEN}✅ docker-compose.yml créé.${NC}"
+echo -e "${GREEN}✅ Makefile créé.${NC}"
 
+# Étape 4 : Build et lancement
+cd jarvis
+echo -e "${BLUE}\n🚀 Construction de l'image Docker...${NC}"
+docker build -t jarvis . 
 
-    # Création server.py
-    echo -e "\n${BLUE}📄 Création de server.py...${NC}"
-    cat > server.py << 'EOF'
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-import uvicorn
-import whisper
-from transformers import pipeline
-import tempfile
-import shutil
-import os
+echo -e "${BLUE}🔌 Lancement du conteneur...${NC}"
+docker run -d --name jarvis -p 8000:8000 jarvis
 
-# --- Initialisation de l'app ---
-app = FastAPI(title="Jarvis Assistant API", version="1.0")
+# Vérification
+if docker ps | grep -q jarvis; then
+    echo -e "${GREEN}✅ Le conteneur JARVIS tourne correctement.${NC}"
+else
+    echo -e "${RED}❌ Le conteneur JARVIS ne tourne PAS.${NC}"
+fi
 
-# --- Chargement des modèles ---
-print("🔊 Chargement du modèle Whisper (transcription)...")
-whisper_model = whisper.load_model("base")
+if curl -s http://localhost:8000 | grep -q "Jarvis"; then
+    echo -e "${GREEN}✅ API JARVIS accessible sur http://localhost:8000${NC}"
+else
+    echo -e "${RED}❌ API JARVIS inaccessible.${NC}"
+    echo -e "${YELLOW}🔄 Vérifie les logs avec :${NC} docker logs jarvis"
+fi
 
-print("🧠 Chargement du pipeline Transformers (analyse de sentiment)...")
-nlp_model = pipeline("sentiment-analysis")
+# Fin
+echo -e "\n${GREEN}🎉 JARVIS est prêt !${NC}"
+echo -e "${BLUE}📱 Accède à la WebApp : http://$(hostname -I | awk '{print $1}')/webapp/index.html${NC}"
 
-print("💬 Chargement du modèle de génération de texte...")
-chatbot_model = pipeline("text-generation", model="tiiuae/falcon-7b-instruct", tokenizer="tiiuae/falcon-7b-instruct")
-
-# --- Modèle Pydantic pour le chat ---
-class Message(BaseModel):
-    message: str
-
-# --- Route racine ---
-@app.get("/")
-async def root():
-    return {"message": "Jarvis est en ligne."}
-
-# --- Route de transcription audio ---
-@app.post("/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
-    try:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-            shutil.copyfileobj(file.file, tmp_file)
-            tmp_path = tmp_file.name
-
-        result = whisper_model.transcribe(tmp_path)
-        transcription = result.get("text", "")
-
-        file.file.close()
-        os.remove(tmp_path)
-
-        return {"transcription": transcription}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# --- Route d’analyse de texte ---
-@app.post("/analyze")
-async def analyze_text(text: str):
-    try:
-        result = nlp_model(text)
-        return {"analysis": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# --- Route de discussion texte ---
-@app.post("/chat")
-async def chat(msg: Message):
-    try:
-        prompt = msg.message
-        output = chatbot_model(prompt, max_new_tokens=100, do_sample=True, temperature=0.7)
-        response_text = output[0]["generated_text"]
-        return {"response": response_text.strip()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# --- Exécution directe pour développement ---
-if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
-EOF
-echo -e "${GREEN}✅ server.py créé.${NC}"
-
-    # Lancement docker-compose
-    echo -e "\n${RED}🚀 Lancement de l’assistant...${NC}"
-    docker-compose up -d > /dev/null 2>&1 &
-    spinner $!
-    echo -e "${GREEN}✅ Docker-compose lancé avec succès.${NC}"
-
-    # Vérification du conteneur
-    if docker ps | grep -q jarvis; then
-        echo -e "${GREEN}✅ Le conteneur JARVIS tourne correctement.${NC}"
-    else
-        echo -e "${RED}❌ Le conteneur JARVIS ne tourne PAS.${NC}"
-        echo -e "${YELLOW}🔄 Tentative de redémarrage...${NC}"
-        docker-compose up -d
-    fi
-
-    # Vérification de l'accès à l'API
-    if curl -s http://localhost:8000 | grep -q "Jarvis"; then
-        echo -e "${GREEN}✅ API JARVIS accessible sur http://localhost:8000${NC}"
-    else
-        echo -e "${RED}❌ API JARVIS inaccessible.${NC}"
-        echo -e "${YELLOW}🔄 Vérifie les logs avec :${NC} docker logs jarvis"
-    fi
-
-echo -e "\n${GREEN}🎉 Installation et validation terminées !${NC}\n"
-
-    echo -e "\n${BLUE}✅ Installation et lancement terminés.${NC}"
-    echo -e "${BLUE}✨ Ton assistant JARVIS tourne maintenant en arrière-plan !${NC}"
-    echo -e "${BLUE}👉 Accède à http://localhost:8000 ou http://<IP_de_ton_serveur>:8000${NC}"
 }
+ 
+
 
 check_jarvis() {
     echo -e "${BLUE}🔍 Vérification de l'environnement JARVIS...${NC}"
 
     echo -e "\n⚙️  Vérification des outils système..."
-    for tool in python3 pip docker docker-compose ffmpeg curl; do
+    for tool in python3 pip docker ffmpeg curl; do
         if command -v $tool >/dev/null 2>&1; then
             echo -e "✅ $tool est installé."
         else
@@ -285,21 +238,14 @@ check_jarvis() {
         fi
     done
 
-    echo -e "\n📦 Activation de l’environnement virtuel Python (si disponible)..."
-    if [ -f jarvis-env/bin/activate ]; then
-        source jarvis-env/bin/activate
-        echo -e "✅ Environnement 'jarvis-env' activé."
-    else
-        echo -e "❌ Environnement 'jarvis-env' non trouvé."
-    fi
-
+   
     echo -e "\n🐍 Vérification des bibliothèques Python..."
     for pkg in torch transformers whisper fastapi uvicorn python-multipart; do
         python -c "import $pkg" >/dev/null 2>&1 && echo -e "✅ Package Python '$pkg' installé." || echo -e "❌ Package Python '$pkg' NON installé."
     done
 
     echo -e "\n📂 Vérification de la structure du projet..."
-    for file in server.py Dockerfile docker-compose.yml; do
+    for file in server.py Dockerfile Makerfile; do
         [ -f "$file" ] && echo -e "✅ $file présent." || echo -e "❌ $file manquant."
     done
 
