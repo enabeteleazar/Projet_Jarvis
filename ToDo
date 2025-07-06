@@ -18,13 +18,33 @@
 🔍 SECTION CHECK:
 
 
-🔍 IDEES A VENIR:
-🗣️ Ajouter un frontend web simple pour uploader un fichier depuis navigateur
+🔍 Fonctionnalités à ajouter à JARVIS :
 
-🎙️ Support futur de la commande vocale en temps réel avec micro
+
+📚 Mémoire conversationnelle
+Ajouter une mémoire pour que JARVIS se souvienne du contexte
+
+📅 Connexion à Google Agenda
+“Quels sont mes rendez-vous aujourd’hui ?”
+
+🏠 Contrôle domotique HomeAssistant
+Allumer la lumière, vérifier température, etc.
+
+🔄 Commandes système locales
+“Redémarre le Raspberry”, “Éteins la télé”, “Lance mon script docker”
+
+🔊 Réponse via haut-parleur Bluetooth
+Pour entendre la voix dans l’enceinte de la voiture ou à la maison
+
+🔌 Plug-ins personnalisés
+Ajoute des modules (météo, radio, alarmes, etc.)
+
+	•	🔄 Remplacer distilgpt2 par un modèle local plus puissant via Ollama ou LM Studio
+	•	🎛️ Ajouter un menu vocal interactif (par ex. “Choisis une action…”)
+	•	🧠 Ajouter un LLM avec mémoire longue (ex: llama.cpp, gpt4all, mistral)
+	•	📦 Créer une base de données SQLite ou JSON pour des plugins persistant
+
 
 📜 Logging des transcriptions dans un fichier (ex : /app/logs/jarvis.log)
 
 📡 Créer un endpoint webhook pour recevoir du texte depuis une autre app (domotique, HomeAssistant, etc.)
-
-🧠 Intégrer un LLM offline léger pour répondre à des questions vocales
